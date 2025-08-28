@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Onkawe - Mobile Learning Aid</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#1976D2',
+                        'primary-dark': '#1565C0',
+                        secondary: '#388E3C',
+                        accent: '#FFA726',
+                        muted: '#757575',
+                        surface: '#FFFFFF',
+                        background: '#FAFAFA'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif']
+                    }
+                }
+            }
+        };
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-background min-h-screen font-sans text-gray-900">
+    <!-- @COMPONENT: Header -->
+    <header class="bg-surface shadow-sm border-b border-gray-100 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 bg-primary rounded-lg flex items-center justify-center">
+                        <i class="fas fa-volume-up text-white text-lg"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-bold text-gray-900">Onkawe</h1>
+                        <p class="text-sm text-muted">Text-to-Speech Learning Aid</p>
+                    </div>
+                </div>
+                
+                <!-- @FUNCTIONALITY: PWA Install button should appear when app is installable -->
+                <button id="installBtn" class="hidden bg-primary hover:bg-primary-dark text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors" data-implementation="Show only when PWA installable">
+                    <i class="fas fa-download mr-2"></i>
+                    Install App
+                </button>
+            </div>
+        </div>
+    </header>
+    <!-- @END_COMPONENT: Header -->
+
+    <main class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- @COMPONENT: TextInput -->
+        <section class="bg-surface rounded-xl shadow-sm border border-gray-100 p-6 mb-8">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-xl font-semibold text-gray-900">Add Text Content</h2>
+                <div class="flex space-x-2">
+                    <button class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors" data-event="click:clearText">
+                        <i class="fas fa-trash-alt mr-2"></i>
+                        Clear
+                    </button>
+                </div>
+            </div>
+
+            <!-- File Upload Area -->
+            <div class="mb-6">
+                <div class="border-2 border-dashed border-gray-300 hover:border-primary transition-colors rounded-lg p-8 text-center cursor-pointer" data-implementation="File drop zone with drag and drop support">
+                    <i class="fas fa-cloud-upload-alt text-4xl text-gray-400 mb-4"></i>
+                    <p class="text-gray-600 mb-2">Drop a text file here, or click to browse</p>
+                    <p class="text-sm text-muted">.txt files only, max 10MB</p>
+                    <input type="file" accept=".txt" class="hidden" data-mock="true" data-event="change:handleFileUpload">
+                </div>
+            </div>
+
+            <div class="flex items-center my-6">
+                <div class="flex-1 border-t border-gray-200"></div>
+                <span class="px-4 text-sm text-muted bg-surface">OR</span>
+                <div class="flex-1 border-t border-gray-200"></div>
+            </div>
+
+            <!-- Text Input -->
+            <div class="mb-6">
+                <label for="textInput" class="block text-sm font-medium text-gray-700 mb-2">
+                    Paste or type your text
+                </label>
+                <textarea 
+                    id="textInput"
+                    data-bind="inputText"
+                    placeholder="Paste your text here or upload a .txt file above..."
+                    class="w-full h-48 p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent resize-none text-base leading-relaxed"
+                    data-mock="true"
+                >Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</textarea>
+            </div>
+
+            <!-- Document Title Input -->
+            <div class="mb-6">
+                <label for="docTitle" class="block text-sm font-medium text-gray-700 mb-2">
+                    Document Title (optional)
+                </label>
+                <input 
+                    type="text" 
+                    id="docTitle"
+                    data-bind="documentTitle"
+                    placeholder="Enter a title for this document..."
+                    class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-base"
+                    data-mock="true"
+                    value="Sample Document Title"
+                />
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex flex-col sm:flex-row gap-3">
+                <button class="flex-1 bg-primary hover:bg-primary-dark text-white py-3 px-6 rounded-lg font-medium transition-colors flex items-center justify-center" data-event="click:playText" data-implementation="Use Web Speech API to read text">
+                    <i class="fas fa-play mr-2"></i>
+                    Play Text
+                </button>
+                <button class="flex-1 bg-secondary hover:bg-green-700 text-white py-3 px-6 rounded-lg font-medium transition-colors flex items-center justify-center" data-event="click:saveDocument" data-implementation="Save to backend via POST /api/upload">
+                    <i class="fas fa-save mr-2"></i>
+                    Save Document
+                </button>
+            </div>
+        </section>
+        <!-- @END_COMPONENT: TextInput -->
+
+        <!-- @COMPONENT: PlaybackControls -->
+        <!-- @STATE: isPlaying:boolean = false, isPaused:boolean = false, playbackSpeed:number = 1 -->
+        <section class="bg-surface rounded-xl shadow-sm border border-gray-100 p-6 mb-8">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold text-gray-900">Playback Controls</h3>
+                <div class="flex items-center space-x-2 text-sm text-muted">
+                    <i class="fas fa-clock"></i>
+                    <span data-bind="estimatedDuration">~2 min</span>
+                </div>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="mb-6">
+                <div class="flex items-center justify-between text-sm text-muted mb-2">
+                    <span data-bind="currentTime">0:00</span>
+                    <span data-bind="totalTime">2:15</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2 cursor-pointer" data-implementation="Seekable progress bar">
+                    <div class="bg-primary h-2 rounded-full transition-all duration-300" style="width: 25%" data-bind="progress"></div>
+                </div>
+            </div>
+
+            <!-- Control Buttons -->
+            <div class="flex items-center justify-center space-x-4 mb-6">
+                <button class="w-12 h-12 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full flex items-center justify-center transition-colors" data-event="click:previousSentence" title="Previous">
+                    <i class="fas fa-step-backward"></i>
+                </button>
+                
+                <button class="w-16 h-16 bg-primary hover:bg-primary-dark text-white rounded-full flex items-center justify-center transition-colors shadow-lg" data-event="click:togglePlayPause" data-implementation="Toggle between play/pause states">
+                    <i class="fas fa-play text-xl" data-bind="playPauseIcon"></i>
+                </button>
+                
+                <button class="w-12 h-12 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full flex items-center justify-center transition-colors" data-event="click:nextSentence" title="Next">
+                    <i class="fas fa-step-forward"></i>
+                </button>
+                
+                <button class="w-12 h-12 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full flex items-center justify-center transition-colors" data-event="click:stopPlayback" title="Stop">
+                    <i class="fas fa-stop"></i>
+                </button>
+            </div>
+
+            <!-- Speed Control -->
+            <div class="flex items-center space-x-4">
+                <label class="text-sm font-medium text-gray-700 min-w-max">
+                    Speed: <span data-bind="playbackSpeed">1.0x</span>
+                </label>
+                <input 
+                    type="range" 
+                    min="0.5" 
+                    max="2.0" 
+                    step="0.1" 
+                    value="1.0"
+                    class="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
+                    data-bind="speedSlider"
+                    data-event="input:updateSpeed"
+                    data-implementation="Update speech synthesis rate"
+                />
+                <div class="flex space-x-1">
+                    <button class="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded text-gray-700 transition-colors" data-event="click:setSpeed(0.5)">0.5x</button>
+                    <button class="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded text-gray-700 transition-colors" data-event="click:setSpeed(1.0)">1x</button>
+                    <button class="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded text-gray-700 transition-colors" data-event="click:setSpeed(1.5)">1.5x</button>
+                    <button class="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded text-gray-700 transition-colors" data-event="click:setSpeed(2.0)">2x</button>
+                </div>
+            </div>
+        </section>
+        <!-- @END_COMPONENT: PlaybackControls -->
+
+        <!-- @COMPONENT: SavedDocuments -->
+        <section class="bg-surface rounded-xl shadow-sm border border-gray-100 p-6">
+            <div class="flex items-center justify-between mb-6">
+                <h3 class="text-lg font-semibold text-gray-900">Saved Documents</h3>
+                <button class="text-primary hover:text-primary-dark text-sm font-medium transition-colors" data-event="click:refreshDocuments" data-implementation="Fetch latest documents from GET /api/documents">
+                    <i class="fas fa-sync-alt mr-1"></i>
+                    Refresh
+                </button>
+            </div>
+
+            <!-- @STATE: documents:array = [], loading:boolean = false -->
+            <div class="space-y-3" data-implementation="Show loading state when fetching documents">
+                <!-- @MAP: documents.map(doc => ( -->
+                <div class="flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer group" data-mock="true" data-event="click:openDocument">
+                    <div class="flex-1 min-w-0">
+                        <h4 class="font-medium text-gray-900 truncate" data-bind="doc.title">Introduction to Machine Learning</h4>
+                        <p class="text-sm text-muted mt-1" data-bind="doc.created_at">Created 2 hours ago</p>
+                        <p class="text-xs text-gray-500 mt-1 line-clamp-2" data-bind="doc.content.substring(0, 100)">
+                            Machine learning is a subset of artificial intelligence that focuses on algorithms...
+                        </p>
+                    </div>
+                    <div class="flex items-center space-x-2 ml-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button class="w-8 h-8 bg-primary hover:bg-primary-dark text-white rounded-full flex items-center justify-center transition-colors" data-event="click:playDocument" title="Play this document">
+                            <i class="fas fa-play text-xs"></i>
+                        </button>
+                        <button class="w-8 h-8 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center transition-colors" data-event="click:deleteDocument" title="Delete document">
+                            <i class="fas fa-trash text-xs"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer group" data-mock="true" data-event="click:openDocument">
+                    <div class="flex-1 min-w-0">
+                        <h4 class="font-medium text-gray-900 truncate" data-bind="doc.title">History of Web Development</h4>
+                        <p class="text-sm text-muted mt-1" data-bind="doc.created_at">Created 1 day ago</p>
+                        <p class="text-xs text-gray-500 mt-1 line-clamp-2" data-bind="doc.content.substring(0, 100)">
+                            The history of web development spans several decades, beginning with the creation...
+                        </p>
+                    </div>
+                    <div class="flex items-center space-x-2 ml-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button class="w-8 h-8 bg-primary hover:bg-primary-dark text-white rounded-full flex items-center justify-center transition-colors" data-event="click:playDocument" title="Play this document">
+                            <i class="fas fa-play text-xs"></i>
+                        </button>
+                        <button class="w-8 h-8 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center transition-colors" data-event="click:deleteDocument" title="Delete document">
+                            <i class="fas fa-trash text-xs"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer group" data-mock="true" data-event="click:openDocument">
+                    <div class="flex-1 min-w-0">
+                        <h4 class="font-medium text-gray-900 truncate" data-bind="doc.title">Physics Study Notes</h4>
+                        <p class="text-sm text-muted mt-1" data-bind="doc.created_at">Created 3 days ago</p>
+                        <p class="text-xs text-gray-500 mt-1 line-clamp-2" data-bind="doc.content.substring(0, 100)">
+                            Newton's laws of motion are three physical laws that form the foundation...
+                        </p>
+                    </div>
+                    <div class="flex items-center space-x-2 ml-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button class="w-8 h-8 bg-primary hover:bg-primary-dark text-white rounded-full flex items-center justify-center transition-colors" data-event="click:playDocument" title="Play this document">
+                            <i class="fas fa-play text-xs"></i>
+                        </button>
+                        <button class="w-8 h-8 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center transition-colors" data-event="click:deleteDocument" title="Delete document">
+                            <i class="fas fa-trash text-xs"></i>
+                        </button>
+                    </div>
+                </div>
+                <!-- @END_MAP -->
+
+                <!-- Empty State -->
+                <div class="text-center py-8 hidden" data-implementation="Show when documents array is empty">
+                    <i class="fas fa-file-alt text-4xl text-gray-300 mb-4"></i>
+                    <p class="text-gray-500 mb-2">No saved documents yet</p>
+                    <p class="text-sm text-muted">Upload a file or paste some text above to get started</p>
+                </div>
+            </div>
+        </section>
+        <!-- @END_COMPONENT: SavedDocuments -->
+    </main>
+
+    <!-- @COMPONENT: Toast Notifications -->
+    <div id="toastContainer" class="fixed bottom-4 right-4 z-50 space-y-2" data-implementation="Show success/error messages">
+        <!-- Toast messages will be dynamically inserted here -->
+    </div>
+    <!-- @END_COMPONENT: Toast Notifications -->
+
+    <!-- @COMPONENT: LoadingOverlay -->
+    <div id="loadingOverlay" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden" data-implementation="Show during API calls">
+        <div class="bg-surface p-6 rounded-xl shadow-xl flex items-center space-x-4">
+            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            <span class="text-gray-700 font-medium">Processing...</span>
+        </div>
+    </div>
+    <!-- @END_COMPONENT: LoadingOverlay -->
+
+    <script>
+        // TODO: Implement business logic, API calls, and state management
+        (function() {
+            // Mock functionality for demonstration
+            
+            // PWA Install functionality
+            let deferredPrompt;
+            const installBtn = document.getElementById('installBtn');
+
+            window.addEventListener('beforeinstallprompt', (e) => {
+                e.preventDefault();
+                deferredPrompt = e;
+                installBtn.classList.remove('hidden');
+            });
+
+            installBtn?.addEventListener('click', async () => {
+                if (deferredPrompt) {
+                    deferredPrompt.prompt();
+                    const { outcome } = await deferredPrompt.userChoice;
+                    deferredPrompt = null;
+                    installBtn.classList.add('hidden');
+                }
+            });
+
+            // Mock speech synthesis functionality
+            function showToast(message, type = 'success') {
+                const toast = document.createElement('div');
+                toast.className = `p-4 rounded-lg shadow-lg max-w-sm transform transition-all duration-300 ${
+                    type === 'success' ? 'bg-secondary text-white' : 'bg-red-500 text-white'
+                }`;
+                toast.innerHTML = `
+                    <div class="flex items-center">
+                        <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'} mr-2"></i>
+                        <span>${message}</span>
+                    </div>
+                `;
+                
+                document.getElementById('toastContainer').appendChild(toast);
+                
+                setTimeout(() => {
+                    toast.remove();
+                }, 3000);
+            }
+
+            // Demo interactions
+            document.addEventListener('click', (e) => {
+                if (e.target.closest('[data-event*="playText"]')) {
+                    showToast('Text-to-speech started!');
+                } else if (e.target.closest('[data-event*="saveDocument"]')) {
+                    showToast('Document saved successfully!');
+                } else if (e.target.closest('[data-event*="deleteDocument"]')) {
+                    e.stopPropagation();
+                    showToast('Document deleted', 'error');
+                }
+            });
+
+            // File upload demo
+            document.addEventListener('change', (e) => {
+                if (e.target.type === 'file') {
+                    const file = e.target.files[0];
+                    if (file) {
+                        showToast(`File "${file.name}" uploaded successfully!`);
+                    }
+                }
+            });
+        })();
+    </script>
+
+    <!-- PWA Manifest -->
+    <script>
+        // Service Worker Registration
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(registration => console.log('SW registered'))
+                    .catch(registrationError => console.log('SW registration failed'));
+            });
+        }
+    </script>
+
+    <style>
+        .slider::-webkit-slider-thumb {
+            appearance: none;
+            height: 20px;
+            width: 20px;
+            background: #1976D2;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        .slider::-moz-range-thumb {
+            height: 20px;
+            width: 20px;
+            background: #1976D2;
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
+        }
+
+        .line-clamp-2 {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+    </style>
+</body>
+</html>
