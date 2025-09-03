@@ -9,6 +9,13 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import type { Document } from "@shared/schema";
 
+import * as pdfjsLib from "pdfjs-dist";
+import pdfjsWorker from "pdfjs-dist/build/pdf.worker?url"; // ✅ Vite-compatible worker
+import mammoth from "mammoth";
+
+// Required for pdfjs worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+
 interface TextInputProps {
   onTextChange: (text: string, title: string) => void;
   onPlayText: (text: string) => void;
@@ -49,18 +56,10 @@ export default function TextInput({
     },
   });
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  // 📂 Handle file upload (txt, pdf, docx)
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
-    if (file.type !== "text/plain") {
-      toast({
-        title: "Error",
-        description: "Only .txt files are allowed",
-        variant: "destructive",
-      });
-      return;
-    }
 
     if (file.size > 10 * 1024 * 1024) {
       toast({
@@ -71,31 +70,87 @@ export default function TextInput({
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const content = e.target?.result as string;
-      const fileName = file.name.replace(".txt", "");
-      setText(content);
+    const fileName = file.name.replace(/\.[^/.]+$/, ""); // remove extension
+    let extractedText = "";
+
+    try {
+      if (file.type === "text/plain") {
+        // TXT files
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          extractedText = e.target?.result as string;
+          setText(extractedText);
+          setTitle(fileName);
+          onTextChange(extractedText, fileName);
+          toast({ title: "Success", description: `File "${file.name}" uploaded successfully!` });
+        };
+        reader.readAsText(file);
+        return; // exit early for txt
+      }
+
+      if (file.type === "application/pdf") {
+        // PDF files
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let textContent = "";
+
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          const strings = content.items.map((item: any) => item.str);
+          textContent += strings.join(" ") + "\n";
+        }
+        extractedText = textContent;
+      }
+
+      if (
+        file.type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+        file.name.endsWith(".docx")
+      ) {
+        // Word .docx files
+        const arrayBuffer = await file.arrayBuffer();
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        extractedText = result?.value || "";
+      }
+
+      if (!extractedText.trim()) {
+        toast({
+          title: "Error",
+          description: "No readable text found in this file",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Update state
+      setText(extractedText);
       setTitle(fileName);
-      onTextChange(content, fileName);
+      onTextChange(extractedText, fileName);
+      toast({ title: "Success", description: `File "${file.name}" uploaded successfully!` });
+
+    } catch (err) {
+      console.error("File upload error:", err);
       toast({
-        title: "Success",
-        description: `File "${file.name}" uploaded successfully!`,
+        title: "Error",
+        description: `Failed to read file: ${file.name}`,
+        variant: "destructive",
       });
-    };
-    reader.readAsText(file);
+    }
   };
 
+  // ✏️ Handle text input change
   const handleTextChange = (value: string) => {
     setText(value);
     onTextChange(value, title);
   };
 
+  // 📝 Handle title input change
   const handleTitleChange = (value: string) => {
     setTitle(value);
     onTextChange(text, value);
   };
 
+  // 🧹 Clear text and title
   const handleClear = () => {
     setText("");
     setTitle("");
@@ -105,6 +160,7 @@ export default function TextInput({
     }
   };
 
+  // ▶️ Play text
   const handlePlay = () => {
     if (!text.trim()) {
       toast({
@@ -117,6 +173,7 @@ export default function TextInput({
     onPlayText(text);
   };
 
+  // 💾 Save document
   const handleSave = () => {
     if (!text.trim()) {
       toast({
@@ -156,12 +213,12 @@ export default function TextInput({
           data-testid="file-upload-zone"
         >
           <Upload className="mx-auto text-gray-400 mb-4" size={48} />
-          <p className="text-gray-600 mb-2">Drop a text file here, or click to browse</p>
-          <p className="text-sm text-muted">.txt files only, max 10MB</p>
+          <p className="text-gray-600 mb-2">Drop a text, PDF, or Word file here, or click to browse</p>
+          <p className="text-sm text-muted">.txt, .pdf, .docx files only, max 10MB</p>
           <input
             ref={fileInputRef}
             type="file"
-            accept=".txt"
+            accept=".txt,.pdf,.docx"
             className="hidden"
             onChange={handleFileUpload}
             data-testid="input-file"
@@ -182,7 +239,7 @@ export default function TextInput({
         </Label>
         <Textarea
           id="textInput"
-          placeholder="Paste your text here or upload a .txt file above..."
+          placeholder="Paste your text here or upload a file above..."
           className="h-48 text-base leading-relaxed resize-none"
           value={text}
           onChange={(e) => handleTextChange(e.target.value)}
