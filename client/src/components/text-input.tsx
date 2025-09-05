@@ -1,12 +1,25 @@
 import { useState, useRef, useEffect } from "react";
-import { Upload, Trash2, Loader2, Play, Pause, Square } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  Upload,
+  Trash2,
+  Loader2,
+  Play,
+  Pause,
+  Square,
+  BookOpen,
+  X,
+  Save,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import * as pdfjsLib from "pdfjs-dist";
 import pdfjsWorker from "pdfjs-dist/build/pdf.worker?url";
 import mammoth from "mammoth";
+import type { Document } from "@shared/schema";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
@@ -24,14 +37,44 @@ export default function TextInput({
   const [text, setText] = useState(currentText);
   const [title, setTitle] = useState(currentTitle);
   const [loadingFile, setLoadingFile] = useState(false);
+
+  // Modal state
+  const [showModal, setShowModal] = useState(false);
+
+  // Speech playback states
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentChunkIndex, setCurrentChunkIndex] = useState<number | null>(
     null
   );
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const startIndexRef = useRef<number>(0);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  // Save document mutation
+  const saveDocumentMutation = useMutation({
+    mutationFn: async (data: { title: string; content: string }) => {
+      const response = await apiRequest("POST", "/api/upload", data);
+      return response.json() as Promise<Document>;
+    },
+    onSuccess: () => {
+      toast({
+        title: "Success",
+        description: "Document saved successfully!",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/documents"] });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to save document",
+        variant: "destructive",
+      });
+    },
+  });
 
   // Split into readable chunks for highlighting + playback
   const chunks = text
@@ -134,11 +177,27 @@ export default function TextInput({
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  // 🔊 Play text with highlight
+  const handleSave = () => {
+    if (!text.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter some text to save",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    saveDocumentMutation.mutate({
+      title: title.trim() || "Untitled Document",
+      content: text,
+    });
+  };
+
+  // Improved speech synthesis with more natural cadence
   const playChunks = () => {
     if (!chunks.length) return;
 
-    let index = 0;
+    let index = startIndexRef.current || 0;
     setIsPlaying(true);
 
     const speakChunk = () => {
@@ -151,13 +210,31 @@ export default function TextInput({
       setCurrentChunkIndex(index);
 
       const utterance = new SpeechSynthesisUtterance(chunks[index]);
-      utteranceRef.current = utterance;
+      
+      // Enhanced human-like speech parameters
+      utterance.rate = 0.95; // Slightly slower for more natural pace
+      utterance.pitch = 1.05; // Slightly higher pitch for friendliness
+      utterance.volume = 1;
+      
+      // Add small pauses between sentences for more natural flow
+      const text = chunks[index];
+      if (text.match(/[.!?]$/)) {
+        utterance.rate = 0.9; // Slow down slightly at the end of sentences
+      }
+      
+      // Add variation for questions to sound more engaging
+      if (text.match(/\?$/)) {
+        utterance.pitch = 1.1; // Slightly higher pitch for questions
+      }
 
       utterance.onend = () => {
         index++;
-        speakChunk();
+        // Add natural pause between chunks (longer after sentences)
+        const pause = text.match(/[.!?]$/) ? 350 : 200;
+        setTimeout(speakChunk, pause);
       };
 
+      utteranceRef.current = utterance;
       speechSynthesis.speak(utterance);
 
       // Auto-scroll highlight into view
@@ -239,21 +316,6 @@ export default function TextInput({
         </div>
       </div>
 
-      {/* Text Area Preview with Highlight */}
-      <div
-        ref={containerRef}
-        className="mb-6 p-3 border rounded-md h-48 overflow-y-auto text-base leading-relaxed bg-white"
-      >
-        {chunks.map((chunk, i) => (
-          <span
-            key={i}
-            className={i === currentChunkIndex ? "bg-yellow-200 highlighted" : ""}
-          >
-            {chunk}
-          </span>
-        ))}
-      </div>
-
       {/* Title Input */}
       <div className="mb-6">
         <Label
@@ -273,31 +335,109 @@ export default function TextInput({
         />
       </div>
 
-      {/* Playback Controls */}
-      <div className="flex gap-2">
-        {!isPlaying && (
-          <Button
-            onClick={playChunks}
-            disabled={!text.trim()}
-            className="flex-1"
-          >
-            <Play className="mr-2" size={16} /> Play
-          </Button>
-        )}
-        {isPlaying && (
-          <Button onClick={pausePlayback} className="flex-1" variant="secondary">
-            <Pause className="mr-2" size={16} /> Pause
-          </Button>
-        )}
-        {!isPlaying && currentChunkIndex !== null && (
-          <Button onClick={resumePlayback} className="flex-1" variant="secondary">
-            <Play className="mr-2" size={16} /> Resume
-          </Button>
-        )}
-        <Button onClick={stopPlayback} className="flex-1" variant="destructive">
-          <Square className="mr-2" size={16} /> Stop
+      {/* Action Buttons */}
+      <div className="flex flex-col sm:flex-row gap-3 mb-4">
+        <Button
+          className="flex-1"
+          variant="secondary"
+          onClick={() => setShowModal(true)}
+          disabled={!text.trim()}
+        >
+          <BookOpen className="mr-2" size={16} /> Open & Play
+        </Button>
+        <Button
+          className="flex-1 bg-secondary hover:bg-green-700"
+          onClick={handleSave}
+          disabled={saveDocumentMutation.isPending || !text.trim()}
+        >
+          <Save size={16} className="mr-2" />
+          {saveDocumentMutation.isPending ? "Saving..." : "Save Document"}
         </Button>
       </div>
+
+      {/* Modal Viewer */}
+      {showModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-lg w-11/12 max-w-3xl h-[80vh] flex flex-col">
+            {/* Header */}
+            <div className="flex justify-between items-center border-b px-4 py-3">
+              <h3 className="text-lg font-semibold">{title || "Document"}</h3>
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => {
+                  stopPlayback();
+                  setShowModal(false);
+                }}
+              >
+                <X />
+              </Button>
+            </div>
+
+            {/* Text content */}
+            <div
+              ref={containerRef}
+              className="flex-1 p-4 overflow-y-auto text-base leading-relaxed"
+            >
+              {chunks.map((chunk, i) => (
+                <span
+                  key={i}
+                  onClick={() => {
+                    stopPlayback();
+                    startIndexRef.current = i;
+                    playChunks();
+                  }}
+                  className={`cursor-pointer ${
+                    i === currentChunkIndex
+                      ? "bg-yellow-200 highlighted"
+                      : "hover:bg-gray-100"
+                  }`}
+                >
+                  {chunk}
+                </span>
+              ))}
+            </div>
+
+            {/* Playback Controls */}
+            <div className="flex gap-2 border-t p-4">
+              {!isPlaying && (
+                <Button
+                  onClick={playChunks}
+                  disabled={!text.trim()}
+                  className="flex-1"
+                >
+                  <Play className="mr-2" size={16} /> Play
+                </Button>
+              )}
+              {isPlaying && (
+                <Button
+                  onClick={pausePlayback}
+                  className="flex-1"
+                  variant="secondary"
+                >
+                  <Pause className="mr-2" size={16} /> Pause
+                </Button>
+              )}
+              {!isPlaying && currentChunkIndex !== null && (
+                <Button
+                  onClick={resumePlayback}
+                  className="flex-1"
+                  variant="secondary"
+                >
+                  <Play className="mr-2" size={16} /> Resume
+                </Button>
+              )}
+              <Button
+                onClick={stopPlayback}
+                className="flex-1"
+                variant="destructive"
+              >
+                <Square className="mr-2" size={16} /> Stop
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
