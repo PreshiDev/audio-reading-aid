@@ -46,7 +46,8 @@ export default function Home() {
                 <Volume2 className="text-white" size={20} />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-gray-900">StudyVoice</h1>
+                {/* <h1 className="text-xl font-bold text-gray-900">StudyVoice</h1> */}
+                <h1 className="text-xl font-bold text-gray-900">ÒNKÀWÉ</h1>
                 <p className="text-sm text-muted">Text-to-Speech Learning Aid</p>
               </div>
             </div>

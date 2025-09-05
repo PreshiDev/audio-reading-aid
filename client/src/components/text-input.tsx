@@ -10,10 +10,19 @@ import {
   BookOpen,
   X,
   Save,
+  Settings,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import * as pdfjsLib from "pdfjs-dist";
@@ -29,6 +38,14 @@ interface TextInputProps {
   currentTitle: string;
 }
 
+// Voice settings interface
+interface VoiceSettings {
+  voiceURI: string | null;
+  rate: number;
+  pitch: number;
+  volume: number;
+}
+
 export default function TextInput({
   onTextChange,
   currentText,
@@ -40,6 +57,7 @@ export default function TextInput({
 
   // Modal state
   const [showModal, setShowModal] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   // Speech playback states
   const [isPlaying, setIsPlaying] = useState(false);
@@ -48,15 +66,36 @@ export default function TextInput({
   );
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const startIndexRef = useRef<number>(0);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const isPausedRef = useRef<boolean>(false);
+
+  // Voice settings state
+  const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>({
+    voiceURI: null,
+    rate: 0.9, // Slower default rate
+    pitch: 1.0,
+    volume: 1.0,
+  });
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  // Save document mutation
+  // Generate a unique device ID for saving documents
+  const getDeviceId = () => {
+    let deviceId = localStorage.getItem('deviceId');
+    if (!deviceId) {
+      deviceId = Math.random().toString(36).substring(2) + Date.now().toString(36);
+      localStorage.setItem('deviceId', deviceId);
+    }
+    return deviceId;
+  };
+
+  // Save document mutation with device-specific saving
   const saveDocumentMutation = useMutation({
-    mutationFn: async (data: { title: string; content: string }) => {
+    mutationFn: async (data: { title: string; content: string; deviceId: string }) => {
       const response = await apiRequest("POST", "/api/upload", data);
       return response.json() as Promise<Document>;
     },
@@ -80,6 +119,90 @@ export default function TextInput({
   const chunks = text
     ? text.match(/.{1,250}(\s|$)/g) || []
     : [];
+
+  // Get available voices
+  useEffect(() => {
+    let isMounted = true;
+    
+    const loadVoices = () => {
+      if (!isMounted) return;
+      
+      const voices = speechSynthesis.getVoices();
+      // Filter to only include voices that can speak English for better performance
+      const englishVoices = voices.filter(voice => voice.lang.includes('en'));
+      setAvailableVoices(englishVoices.length > 0 ? englishVoices : voices);
+      
+      // Set a default voice if none is selected
+      if (!voiceSettings.voiceURI && voices.length > 0) {
+        // Prefer a natural-sounding voice if available
+        const defaultVoice = voices.find(v => v.lang.includes('en')) || voices[0];
+        setVoiceSettings(prev => ({
+          ...prev,
+          voiceURI: defaultVoice.voiceURI
+        }));
+      }
+    };
+    
+    // Load voices immediately if available
+    if (speechSynthesis.getVoices().length > 0) {
+      loadVoices();
+    }
+    
+    // Some browsers load voices asynchronously
+    speechSynthesis.onvoiceschanged = loadVoices;
+    
+    return () => {
+      isMounted = false;
+      speechSynthesis.onvoiceschanged = null;
+    };
+  }, []);
+
+  // Request wake lock to prevent device from sleeping (with feature detection)
+  const requestWakeLock = async () => {
+    try {
+      if ('wakeLock' in navigator && wakeLockRef.current === null) {
+        wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+        console.log('Wake Lock is active');
+      }
+    } catch (err) {
+      console.warn('Failed to acquire wake lock (may not be supported):', err);
+      // Continue without wake lock - this is not a critical error
+    }
+  };
+
+  // Release wake lock
+  const releaseWakeLock = async () => {
+    if (wakeLockRef.current) {
+      try {
+        await wakeLockRef.current.release();
+      } catch (err) {
+        console.warn('Error releasing wake lock:', err);
+      }
+      wakeLockRef.current = null;
+      console.log('Wake Lock released');
+    }
+  };
+
+  // Handle visibility change to reacquire wake lock
+  useEffect(() => {
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === 'visible' && wakeLockRef.current !== null) {
+        // Try to reacquire wake lock if it was previously active
+        await requestWakeLock();
+      }
+    };
+
+    // Only add event listener if wake lock is supported
+    if ('wakeLock' in navigator) {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    return () => {
+      if ('wakeLock' in navigator) {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
+  }, []);
 
   // 📂 Handle file upload
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -181,7 +304,7 @@ export default function TextInput({
     if (!text.trim()) {
       toast({
         title: "Error",
-        description: "Please enter some text to save",
+        description: "Please enter or upload text before saving",
         variant: "destructive",
       });
       return;
@@ -190,20 +313,30 @@ export default function TextInput({
     saveDocumentMutation.mutate({
       title: title.trim() || "Untitled Document",
       content: text,
+      deviceId: getDeviceId()
     });
   };
 
-  // Improved speech synthesis with more natural cadence
-  const playChunks = () => {
+  // Improved speech synthesis with voice selection
+  const playChunks = async (startIndex: number = 0) => {
     if (!chunks.length) return;
 
-    let index = startIndexRef.current || 0;
+    // Request wake lock to prevent device from sleeping (non-blocking)
+    requestWakeLock().catch(err => {
+      console.warn('Wake lock not available, continuing without it:', err);
+    });
+
+    let index = startIndex;
     setIsPlaying(true);
+    isPausedRef.current = false;
 
     const speakChunk = () => {
-      if (index >= chunks.length) {
-        setIsPlaying(false);
-        setCurrentChunkIndex(null);
+      if (index >= chunks.length || isPausedRef.current) {
+        if (index >= chunks.length) {
+          setIsPlaying(false);
+          setCurrentChunkIndex(null);
+          releaseWakeLock().catch(() => {}); // Ignore errors in cleanup
+        }
         return;
       }
 
@@ -211,20 +344,29 @@ export default function TextInput({
 
       const utterance = new SpeechSynthesisUtterance(chunks[index]);
       
-      // Enhanced human-like speech parameters
-      utterance.rate = 0.95; // Slightly slower for more natural pace
-      utterance.pitch = 1.05; // Slightly higher pitch for friendliness
-      utterance.volume = 1;
+      // Apply user-selected voice settings
+      if (voiceSettings.voiceURI) {
+        const selectedVoice = availableVoices.find(
+          voice => voice.voiceURI === voiceSettings.voiceURI
+        );
+        if (selectedVoice) {
+          utterance.voice = selectedVoice;
+        }
+      }
+      
+      utterance.rate = voiceSettings.rate;
+      utterance.pitch = voiceSettings.pitch;
+      utterance.volume = voiceSettings.volume;
       
       // Add small pauses between sentences for more natural flow
       const text = chunks[index];
       if (text.match(/[.!?]$/)) {
-        utterance.rate = 0.9; // Slow down slightly at the end of sentences
+        utterance.rate = Math.max(0.7, voiceSettings.rate - 0.1);
       }
       
       // Add variation for questions to sound more engaging
       if (text.match(/\?$/)) {
-        utterance.pitch = 1.1; // Slightly higher pitch for questions
+        utterance.pitch = Math.min(2.0, voiceSettings.pitch + 0.1);
       }
 
       utterance.onend = () => {
@@ -234,8 +376,23 @@ export default function TextInput({
         setTimeout(speakChunk, pause);
       };
 
+      utterance.onerror = (event) => {
+        console.error('Speech synthesis error:', event.error);
+        setIsPlaying(false);
+        setCurrentChunkIndex(null);
+        releaseWakeLock().catch(() => {}); // Ignore errors in cleanup
+      };
+
       utteranceRef.current = utterance;
-      speechSynthesis.speak(utterance);
+      
+      try {
+        speechSynthesis.speak(utterance);
+      } catch (err) {
+        console.error('Error speaking utterance:', err);
+        setIsPlaying(false);
+        setCurrentChunkIndex(null);
+        releaseWakeLock().catch(() => {});
+      }
 
       // Auto-scroll highlight into view
       setTimeout(() => {
@@ -253,23 +410,40 @@ export default function TextInput({
   const pausePlayback = () => {
     speechSynthesis.pause();
     setIsPlaying(false);
+    isPausedRef.current = true;
   };
 
   const resumePlayback = () => {
     speechSynthesis.resume();
     setIsPlaying(true);
+    isPausedRef.current = false;
+    
+    // If we're at the end of the current utterance, continue to next chunk
+    if (speechSynthesis.speaking === false && currentChunkIndex !== null) {
+      playChunks(currentChunkIndex + 1);
+    }
   };
 
-  const stopPlayback = () => {
+  const stopPlayback = async () => {
     speechSynthesis.cancel();
     setIsPlaying(false);
     setCurrentChunkIndex(null);
+    isPausedRef.current = false;
+    await releaseWakeLock().catch(() => {}); // Silent cleanup
+  };
+
+  // Handle double-click to start reading from a specific position
+  const handleTextSelection = (index: number) => {
+    stopPlayback();
+    startIndexRef.current = index;
+    playChunks(index);
   };
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       speechSynthesis.cancel();
+      releaseWakeLock().catch(() => {}); // Silent cleanup
     };
   }, []);
 
@@ -335,25 +509,129 @@ export default function TextInput({
         />
       </div>
 
-      {/* Action Buttons */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-4">
-        <Button
-          className="flex-1"
-          variant="secondary"
-          onClick={() => setShowModal(true)}
-          disabled={!text.trim()}
-        >
-          <BookOpen className="mr-2" size={16} /> Open & Play
-        </Button>
-        <Button
-          className="flex-1 bg-secondary hover:bg-green-700"
-          onClick={handleSave}
-          disabled={saveDocumentMutation.isPending || !text.trim()}
-        >
-          <Save size={16} className="mr-2" />
-          {saveDocumentMutation.isPending ? "Saving..." : "Save Document"}
-        </Button>
-      </div>
+      {/* Action Buttons - Only show when there's text */}
+      {text && (
+        <div className="flex flex-col sm:flex-row gap-3 mb-4">
+          <Button
+            className="flex-1"
+            variant="secondary"
+            onClick={() => setShowModal(true)}
+          >
+            <BookOpen className="mr-2" size={16} /> Open & Play
+          </Button>
+          <Button
+            className="flex-1"
+            onClick={() => setShowSettings(true)}
+          >
+            <Settings className="mr-2" size={16} /> Voice Settings
+          </Button>
+          <Button
+            className="flex-1 bg-secondary hover:bg-green-700"
+            onClick={handleSave}
+            disabled={saveDocumentMutation.isPending}
+          >
+            <Save size={16} className="mr-2" />
+            {saveDocumentMutation.isPending ? "Saving..." : "Save Document"}
+          </Button>
+        </div>
+      )}
+
+      {/* Voice Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl shadow-lg w-11/12 max-w-md p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold">Voice Settings</h3>
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => setShowSettings(false)}
+              >
+                <X />
+              </Button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="voice-select" className="block mb-2">
+                  Voice
+                </Label>
+                <Select
+                  value={voiceSettings.voiceURI || ""}
+                  onValueChange={(value) => 
+                    setVoiceSettings({...voiceSettings, voiceURI: value})
+                  }
+                >
+                  <SelectTrigger id="voice-select">
+                    <SelectValue placeholder="Select a voice" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableVoices.map((voice) => (
+                      <SelectItem key={voice.voiceURI} value={voice.voiceURI}>
+                        {voice.name} ({voice.lang})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div>
+                <Label htmlFor="rate-slider" className="block mb-2">
+                  Speed: {voiceSettings.rate.toFixed(1)}
+                </Label>
+                <Slider
+                  id="rate-slider"
+                  min={0.5}
+                  max={2}
+                  step={0.1}
+                  value={[voiceSettings.rate]}
+                  onValueChange={([value]) => 
+                    setVoiceSettings({...voiceSettings, rate: value})
+                  }
+                />
+              </div>
+              
+              <div>
+                <Label htmlFor="pitch-slider" className="block mb-2">
+                  Pitch: {voiceSettings.pitch.toFixed(1)}
+                </Label>
+                <Slider
+                  id="pitch-slider"
+                  min={0.5}
+                  max={2}
+                  step={0.1}
+                  value={[voiceSettings.pitch]}
+                  onValueChange={([value]) => 
+                    setVoiceSettings({...voiceSettings, pitch: value})
+                  }
+                />
+              </div>
+              
+              <div>
+                <Label htmlFor="volume-slider" className="block mb-2">
+                  Volume: {voiceSettings.volume.toFixed(1)}
+                </Label>
+                <Slider
+                  id="volume-slider"
+                  min={0}
+                  max={1}
+                  step={0.1}
+                  value={[voiceSettings.volume]}
+                  onValueChange={([value]) => 
+                    setVoiceSettings({...voiceSettings, volume: value})
+                  }
+                />
+              </div>
+            </div>
+            
+            <div className="mt-6 flex justify-end">
+              <Button onClick={() => setShowSettings(false)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Viewer */}
       {showModal && (
@@ -362,16 +640,25 @@ export default function TextInput({
             {/* Header */}
             <div className="flex justify-between items-center border-b px-4 py-3">
               <h3 className="text-lg font-semibold">{title || "Document"}</h3>
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => {
-                  stopPlayback();
-                  setShowModal(false);
-                }}
-              >
-                <X />
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => setShowSettings(true)}
+                >
+                  <Settings size={16} />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => {
+                    stopPlayback();
+                    setShowModal(false);
+                  }}
+                >
+                  <X />
+                </Button>
+              </div>
             </div>
 
             {/* Text content */}
@@ -382,12 +669,8 @@ export default function TextInput({
               {chunks.map((chunk, i) => (
                 <span
                   key={i}
-                  onClick={() => {
-                    stopPlayback();
-                    startIndexRef.current = i;
-                    playChunks();
-                  }}
-                  className={`cursor-pointer ${
+                  onDoubleClick={() => handleTextSelection(i)}
+                  className={`cursor-pointer select-none ${
                     i === currentChunkIndex
                       ? "bg-yellow-200 highlighted"
                       : "hover:bg-gray-100"
@@ -402,7 +685,7 @@ export default function TextInput({
             <div className="flex gap-2 border-t p-4">
               {!isPlaying && (
                 <Button
-                  onClick={playChunks}
+                  onClick={() => playChunks(currentChunkIndex !== null ? currentChunkIndex : 0)}
                   disabled={!text.trim()}
                   className="flex-1"
                 >
