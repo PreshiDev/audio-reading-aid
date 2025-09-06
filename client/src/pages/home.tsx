@@ -22,6 +22,13 @@ export default function Home() {
     resume,
     stop,
     setSpeed,
+    handlePlay,
+    handlePause,
+    handleResume,
+    handleStop,
+    handleSpeedChange,
+    handleVoiceChange,
+    currentVoice,
   } = useSpeechSynthesis();
 
   const handlePlayText = (text: string) => {
@@ -66,6 +73,7 @@ export default function Home() {
           currentTitle={currentTitle}
         />
         
+
         <PlaybackControls
           isPlaying={isPlaying}
           isPaused={isPaused}
@@ -73,11 +81,13 @@ export default function Home() {
           currentTime={currentTime}
           totalTime={totalTime}
           progress={progress}
-          onPlay={() => currentText && handlePlayText(currentText)}
-          onPause={pause}
-          onResume={resume}
-          onStop={stop}
-          onSpeedChange={setSpeed}
+          onPlay={handlePlay}
+          onPause={handlePause}
+          onResume={handleResume}
+          onStop={handleStop}
+          onSpeedChange={handleSpeedChange}
+          onVoiceChange={handleVoiceChange} // Make sure this is a function
+          currentVoice={currentVoice}
         />
         
         <SavedDocuments 

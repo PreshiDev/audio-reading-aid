@@ -11,6 +11,7 @@ import {
   X,
   Save,
   Settings,
+  Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,10 +65,13 @@ export default function TextInput({
   const [currentChunkIndex, setCurrentChunkIndex] = useState<number | null>(
     null
   );
+  const [selectedWord, setSelectedWord] = useState<string | null>(null);
+  const [selectedWordIndex, setSelectedWordIndex] = useState<number | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const startIndexRef = useRef<number>(0);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const isPausedRef = useRef<boolean>(false);
+  const selectionRangeRef = useRef<{ start: number; end: number } | null>(null);
 
   // Voice settings state
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>({
@@ -76,10 +80,17 @@ export default function TextInput({
     pitch: 1.0,
     volume: 1.0,
   });
+  const [tempVoiceSettings, setTempVoiceSettings] = useState<VoiceSettings>({
+    voiceURI: null,
+    rate: 0.9,
+    pitch: 1.0,
+    volume: 1.0,
+  });
   const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const textContainerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -137,6 +148,10 @@ export default function TextInput({
         // Prefer a natural-sounding voice if available
         const defaultVoice = voices.find(v => v.lang.includes('en')) || voices[0];
         setVoiceSettings(prev => ({
+          ...prev,
+          voiceURI: defaultVoice.voiceURI
+        }));
+        setTempVoiceSettings(prev => ({
           ...prev,
           voiceURI: defaultVoice.voiceURI
         }));
@@ -298,6 +313,7 @@ export default function TextInput({
     setTitle("");
     onTextChange("", "");
     if (fileInputRef.current) fileInputRef.current.value = "";
+    stopPlayback();
   };
 
   const handleSave = () => {
@@ -317,9 +333,111 @@ export default function TextInput({
     });
   };
 
+  // Apply voice settings
+  const applyVoiceSettings = () => {
+    setVoiceSettings({ ...tempVoiceSettings });
+    
+    // If currently playing, restart with new settings
+    if (isPlaying || isPausedRef.current) {
+      stopPlayback();
+      
+      // If we were in the middle of playback, restart from current position
+      if (currentChunkIndex !== null) {
+        setTimeout(() => {
+          playChunks(currentChunkIndex);
+        }, 100);
+      }
+    }
+    
+    toast({
+      title: "Settings Applied",
+      description: "Voice settings have been updated and will be used for future playback.",
+    });
+    
+    setShowSettings(false);
+  };
+
+  // Open settings modal and initialize temp settings
+  const openSettings = () => {
+    setTempVoiceSettings({ ...voiceSettings });
+    setShowSettings(true);
+  };
+
+  // Create a new utterance with current voice settings
+  const createUtterance = (text: string): SpeechSynthesisUtterance => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    
+    // Apply user-selected voice settings
+    if (voiceSettings.voiceURI) {
+      const selectedVoice = availableVoices.find(
+        voice => voice.voiceURI === voiceSettings.voiceURI
+      );
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+      }
+    }
+    
+    utterance.rate = voiceSettings.rate;
+    utterance.pitch = voiceSettings.pitch;
+    utterance.volume = voiceSettings.volume;
+    
+    return utterance;
+  };
+
+  // Handle word selection
+  const handleWordSelection = () => {
+    const selection = window.getSelection();
+    if (!selection || selection.toString().trim() === "") {
+      setSelectedWord(null);
+      setSelectedWordIndex(null);
+      selectionRangeRef.current = null;
+      return;
+    }
+
+    const selectedText = selection.toString().trim();
+    if (selectedText.split(/\s+/).length > 1) {
+      // More than one word selected, clear selection
+      setSelectedWord(null);
+      setSelectedWordIndex(null);
+      selectionRangeRef.current = null;
+      return;
+    }
+
+    setSelectedWord(selectedText);
+    
+    // Store the range for highlighting
+    if (selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      selectionRangeRef.current = {
+        start: range.startOffset,
+        end: range.endOffset
+      };
+    }
+
+    // Create utterance for the selected word
+    const utterance = createUtterance(selectedText);
+    
+    // Cancel any current speech
+    speechSynthesis.cancel();
+    
+    // Speak the selected word
+    speechSynthesis.speak(utterance);
+    
+    // Clear selection after speaking
+    utterance.onend = () => {
+      selection.removeAllRanges();
+      setSelectedWord(null);
+      setSelectedWordIndex(null);
+      selectionRangeRef.current = null;
+    };
+  };
+
   // Improved speech synthesis with voice selection
   const playChunks = async (startIndex: number = 0) => {
     if (!chunks.length) return;
+
+    // Always cancel any ongoing speech before starting new
+    speechSynthesis.cancel();
 
     // Request wake lock to prevent device from sleeping (non-blocking)
     requestWakeLock().catch(err => {
@@ -342,21 +460,8 @@ export default function TextInput({
 
       setCurrentChunkIndex(index);
 
-      const utterance = new SpeechSynthesisUtterance(chunks[index]);
-      
-      // Apply user-selected voice settings
-      if (voiceSettings.voiceURI) {
-        const selectedVoice = availableVoices.find(
-          voice => voice.voiceURI === voiceSettings.voiceURI
-        );
-        if (selectedVoice) {
-          utterance.voice = selectedVoice;
-        }
-      }
-      
-      utterance.rate = voiceSettings.rate;
-      utterance.pitch = voiceSettings.pitch;
-      utterance.volume = voiceSettings.volume;
+      // Create a fresh utterance with current settings
+      const utterance = createUtterance(chunks[index]);
       
       // Add small pauses between sentences for more natural flow
       const text = chunks[index];
@@ -420,7 +525,7 @@ export default function TextInput({
     
     // If we're at the end of the current utterance, continue to next chunk
     if (speechSynthesis.speaking === false && currentChunkIndex !== null) {
-      playChunks(currentChunkIndex + 1);
+      playChunks(currentChunkIndex);
     }
   };
 
@@ -521,7 +626,7 @@ export default function TextInput({
           </Button>
           <Button
             className="flex-1"
-            onClick={() => setShowSettings(true)}
+            onClick={openSettings}
           >
             <Settings className="mr-2" size={16} /> Voice Settings
           </Button>
@@ -557,9 +662,9 @@ export default function TextInput({
                   Voice
                 </Label>
                 <Select
-                  value={voiceSettings.voiceURI || ""}
+                  value={tempVoiceSettings.voiceURI || ""}
                   onValueChange={(value) => 
-                    setVoiceSettings({...voiceSettings, voiceURI: value})
+                    setTempVoiceSettings({...tempVoiceSettings, voiceURI: value})
                   }
                 >
                   <SelectTrigger id="voice-select">
@@ -577,56 +682,60 @@ export default function TextInput({
               
               <div>
                 <Label htmlFor="rate-slider" className="block mb-2">
-                  Speed: {voiceSettings.rate.toFixed(1)}
+                  Speed: {tempVoiceSettings.rate.toFixed(1)}
                 </Label>
                 <Slider
                   id="rate-slider"
                   min={0.5}
                   max={2}
                   step={0.1}
-                  value={[voiceSettings.rate]}
+                  value={[tempVoiceSettings.rate]}
                   onValueChange={([value]) => 
-                    setVoiceSettings({...voiceSettings, rate: value})
+                    setTempVoiceSettings({...tempVoiceSettings, rate: value})
                   }
                 />
               </div>
               
               <div>
                 <Label htmlFor="pitch-slider" className="block mb-2">
-                  Pitch: {voiceSettings.pitch.toFixed(1)}
+                  Pitch: {tempVoiceSettings.pitch.toFixed(1)}
                 </Label>
                 <Slider
                   id="pitch-slider"
                   min={0.5}
                   max={2}
                   step={0.1}
-                  value={[voiceSettings.pitch]}
+                  value={[tempVoiceSettings.pitch]}
                   onValueChange={([value]) => 
-                    setVoiceSettings({...voiceSettings, pitch: value})
+                    setTempVoiceSettings({...tempVoiceSettings, pitch: value})
                   }
                 />
               </div>
               
               <div>
                 <Label htmlFor="volume-slider" className="block mb-2">
-                  Volume: {voiceSettings.volume.toFixed(1)}
+                  Volume: {tempVoiceSettings.volume.toFixed(1)}
                 </Label>
                 <Slider
                   id="volume-slider"
                   min={0}
                   max={1}
                   step={0.1}
-                  value={[voiceSettings.volume]}
+                  value={[tempVoiceSettings.volume]}
                   onValueChange={([value]) => 
-                    setVoiceSettings({...voiceSettings, volume: value})
+                    setTempVoiceSettings({...tempVoiceSettings, volume: value})
                   }
                 />
               </div>
             </div>
             
-            <div className="mt-6 flex justify-end">
-              <Button onClick={() => setShowSettings(false)}>
-                Close
+            <div className="mt-6 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowSettings(false)}>
+                Cancel
+              </Button>
+              <Button onClick={applyVoiceSettings}>
+                <Check className="mr-2" size={16} />
+                Apply Settings
               </Button>
             </div>
           </div>
@@ -644,7 +753,7 @@ export default function TextInput({
                 <Button
                   size="icon"
                   variant="ghost"
-                  onClick={() => setShowSettings(true)}
+                  onClick={openSettings}
                 >
                   <Settings size={16} />
                 </Button>
@@ -665,6 +774,7 @@ export default function TextInput({
             <div
               ref={containerRef}
               className="flex-1 p-4 overflow-y-auto text-base leading-relaxed"
+              onMouseUp={handleWordSelection}
             >
               {chunks.map((chunk, i) => (
                 <span
@@ -683,9 +793,9 @@ export default function TextInput({
 
             {/* Playback Controls */}
             <div className="flex gap-2 border-t p-4">
-              {!isPlaying && (
+              {!isPlaying && currentChunkIndex === null && (
                 <Button
-                  onClick={() => playChunks(currentChunkIndex !== null ? currentChunkIndex : 0)}
+                  onClick={() => playChunks(0)}
                   disabled={!text.trim()}
                   className="flex-1"
                 >
@@ -714,6 +824,7 @@ export default function TextInput({
                 onClick={stopPlayback}
                 className="flex-1"
                 variant="destructive"
+                disabled={!isPlaying && currentChunkIndex === null}
               >
                 <Square className="mr-2" size={16} /> Stop
               </Button>
