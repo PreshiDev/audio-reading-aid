@@ -72,6 +72,7 @@ export default function TextInput({
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const isPausedRef = useRef<boolean>(false);
   const selectionRangeRef = useRef<{ start: number; end: number } | null>(null);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Voice settings state
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>({
@@ -107,7 +108,7 @@ export default function TextInput({
   // Save document mutation with device-specific saving
   const saveDocumentMutation = useMutation({
     mutationFn: async (data: { title: string; content: string; deviceId: string }) => {
-      const response = await apiRequest("POST", "/api/upload", data);
+      const response = await apiRequest("POST", "/api/documents", data);
       return response.json() as Promise<Document>;
     },
     onSuccess: () => {
@@ -438,6 +439,12 @@ export default function TextInput({
 
     // Always cancel any ongoing speech before starting new
     speechSynthesis.cancel();
+    
+    // Clear any existing timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
 
     // Request wake lock to prevent device from sleeping (non-blocking)
     requestWakeLock().catch(err => {
@@ -478,7 +485,7 @@ export default function TextInput({
         index++;
         // Add natural pause between chunks (longer after sentences)
         const pause = text.match(/[.!?]$/) ? 350 : 200;
-        setTimeout(speakChunk, pause);
+        timeoutRef.current = setTimeout(speakChunk, pause);
       };
 
       utterance.onerror = (event) => {
@@ -516,16 +523,22 @@ export default function TextInput({
     speechSynthesis.pause();
     setIsPlaying(false);
     isPausedRef.current = true;
+    
+    // Clear any pending timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
   };
 
   const resumePlayback = () => {
-    speechSynthesis.resume();
-    setIsPlaying(true);
-    isPausedRef.current = false;
-    
-    // If we're at the end of the current utterance, continue to next chunk
-    if (speechSynthesis.speaking === false && currentChunkIndex !== null) {
-      playChunks(currentChunkIndex);
+    if (speechSynthesis.speaking) {
+      speechSynthesis.resume();
+      setIsPlaying(true);
+      isPausedRef.current = false;
+    } else if (currentChunkIndex !== null) {
+      // If speech was completed while paused, continue from next chunk
+      playChunks(currentChunkIndex + 1);
     }
   };
 
@@ -534,6 +547,13 @@ export default function TextInput({
     setIsPlaying(false);
     setCurrentChunkIndex(null);
     isPausedRef.current = false;
+    
+    // Clear any pending timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    
     await releaseWakeLock().catch(() => {}); // Silent cleanup
   };
 
@@ -548,6 +568,9 @@ export default function TextInput({
   useEffect(() => {
     return () => {
       speechSynthesis.cancel();
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
       releaseWakeLock().catch(() => {}); // Silent cleanup
     };
   }, []);
